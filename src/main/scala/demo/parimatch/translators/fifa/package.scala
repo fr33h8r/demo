@@ -1,61 +1,52 @@
 package demo.parimatch.translators
 
 import demo.feed.model.{
+  Interval,
   Score,
   ScoreboardMessage,
   Timer,
-  Interval,
   Stage => FeedStage
 }
 import demo.parimatch.domain.EventStatuses.EventStatus
 import demo.parimatch.domain.{
   EventStatuses,
   FifaStage,
-  MappingError,
-  ScoreboardMappingError,
   SportClockSetting,
-  FifaPeriod => PmPeriod,
-  FifaScoreboardItem => PmScoreboardItem
+  FifaPeriod => PmPeriod
 }
-import demo.parimatch.model.Scoreboard.Payload.Clock
+import demo.parimatch.model.Scoreboard.Clock
 import demo.parimatch.model.{Period, PeriodKey, Scoreboard}
 import demo.parimatch.translators
-import demo.parimatch.translators.fifa.{ScoreboardItem => FeedScoreboardItem}
 
 package object fifa {
+
   val clockSettings: SportClockSetting = sportClockSettings("Fifa")
 
-  def toEventStatus(stage: Int): Either[MappingError, EventStatus] =
+  def toEventStatus(stage: Int): Option[EventStatus] =
     stage match {
-      case FeedStage.NotStarted | FeedStage.Undefined =>
-        Right(EventStatuses.NOT_STARTED)
-      case FeedStage.Finished => Right(EventStatuses.FINISHED)
+      case FeedStage.Finished => Some(EventStatuses.FINISHED)
       case FeedStage.Time1 | FeedStage.Time2 =>
-        Right(EventStatuses.PLAYING)
+        Some(EventStatuses.PLAYING)
       case FeedStage.Break1 =>
-        Right(EventStatuses.PLAYING)
-      case s =>
-        Left(ScoreboardMappingError(s"Error converting event status $s"))
+        Some(EventStatuses.PLAYING)
+      case _ => None
     }
 
-  def toCurrentStage(stage: Int): Either[MappingError, Int] =
+  def toCurrentStage(stage: Int): Option[Int] =
     stage match {
-      case FeedStage.NotStarted | FeedStage.Undefined =>
-        Right(FifaStage.Start)
-      case FeedStage.Time1    => Right(FifaStage.Half1)
-      case FeedStage.Break1   => Right(FifaStage.Break1)
-      case FeedStage.Time2    => Right(FifaStage.Half2)
-      case FeedStage.Finished => Right(FifaStage.Finish)
-      case s =>
-        Left(ScoreboardMappingError(s"Error converting current stage $s"))
+      case FeedStage.Time1    => Some(FifaStage.Half1)
+      case FeedStage.Break1   => Some(FifaStage.Break1)
+      case FeedStage.Time2    => Some(FifaStage.Half2)
+      case FeedStage.Finished => Some(FifaStage.Finish)
+      case _                  => None
     }
 
-  def toPeriodType(interval: Int): Either[MappingError, Int] =
+  def toPeriodType(interval: Int): Option[Int] =
     interval match {
-      case Interval.Match => Right(PmPeriod.MainTime)
-      case Interval.Time1 => Right(PmPeriod.Half1)
-      case Interval.Time2 => Right(PmPeriod.Half2)
-      case s              => Left(ScoreboardMappingError(s"Error converting period $s"))
+      case Interval.Match => Some(PmPeriod.MainTime)
+      case Interval.Time1 => Some(PmPeriod.Half1)
+      case Interval.Time2 => Some(PmPeriod.Half2)
+      case _              => None
     }
 
   def toClock(timer: Option[Timer]): Option[Clock] = timer.map(t =>
@@ -71,7 +62,7 @@ package object fifa {
   def translate(
       scoreboard: ScoreboardMessage,
       taxonomyStatus: Int
-  ): Either[MappingError, Scoreboard.Payload] = {
+  ): Option[Scoreboard] = {
     for {
       eventStatus <- translators.toEventStatus(
         taxonomyStatus,
@@ -79,12 +70,11 @@ package object fifa {
         toEventStatus
       )
       currentStage <- toCurrentStage(scoreboard.stage)
-      periods <- toPeriods(
-        scoreboard.scores,
-        convertScoreboardItem,
-        toPeriodKey
+      periods = toPeriods(
+        toPeriodKey,
+        scoreboard.scores
       )
-    } yield Scoreboard.Payload(
+    } yield Scoreboard(
       eventStatus = eventStatus,
       currentStage = currentStage,
       periods = periods ++ getCopiedPeriod(
@@ -94,14 +84,6 @@ package object fifa {
       ),
       clock = toClock(scoreboard.timer)
     )
-  }
-
-  private def convertScoreboardItem(feedScoreboard: Int): Option[String] = {
-    feedScoreboard match {
-      case FeedScoreboardItem.GoalsPeriodScores =>
-        Some(PmScoreboardItem.GoalPeriodScores)
-      case _ => None
-    }
   }
 
   private def getCopiedPeriod(
@@ -114,7 +96,7 @@ package object fifa {
         p.withKey(p.getKey.withPeriodType(destinationPeriodType))
     }
 
-  private def toPeriodKey(score: Score): Either[MappingError, PeriodKey] =
+  private def toPeriodKey(score: Score): Option[PeriodKey] =
     toPeriodType(score.interval)
       .map(periodType => PeriodKey(periodType, score.subInterval))
 }
